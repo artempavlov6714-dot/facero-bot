@@ -1,12 +1,12 @@
 # ============================================
 # FACERO — БОТ ДЛЯ ОЦЕНКИ ВНЕШНОСТИ
-# ДЛЯ JUSTRUNMY.APP
+# ДЛЯ RENDER.COM (ИСПРАВЛЕННЫЙ)
 # ============================================
 
 import os
 import logging
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
@@ -15,43 +15,29 @@ import cv2
 import mediapipe as mp
 
 # ===== НАСТРОЙКИ =====
-TOKEN = "8950596380:AAFb8-lnPD5WTr7fu9W8PSJkdXswG2VBWI8"
-PORT = 5000
+TOKEN = os.environ.get("BOT_TOKEN")
+PORT = 8443  # ИСПРАВЛЕНО: Telegram разрешает только 80, 88, 443, 8443
 
-# ===== ЛОГИРОВАНИЕ =====
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ===== ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ =====
+# ===== БАЗА ДАННЫХ =====
 def init_db():
     conn = sqlite3.connect('facero.db')
     c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            telegram_id INTEGER UNIQUE,
-            username TEXT,
-            first_name TEXT,
-            requests_today INTEGER DEFAULT 0,
-            last_date TEXT,
-            extra_requests INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS payments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            amount INTEGER,
-            requests INTEGER,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_id INTEGER UNIQUE,
+        username TEXT,
+        first_name TEXT,
+        requests_today INTEGER DEFAULT 0,
+        last_date TEXT,
+        extra_requests INTEGER DEFAULT 0
+    )''')
     conn.commit()
     conn.close()
     logger.info("База данных создана")
 
-# ===== ФУНКЦИИ БАЗЫ ДАННЫХ =====
 def get_user(user_id):
     conn = sqlite3.connect('facero.db')
     c = conn.cursor()
@@ -105,7 +91,7 @@ def add_extra_requests(user_id, count):
     conn.commit()
     conn.close()
 
-# ===== АНАЛИЗ ЛИЦА (ИСПРАВЛЕННЫЙ) =====
+# ===== АНАЛИЗ ЛИЦА =====
 def analyze_face(image_bytes):
     try:
         nparr = np.frombuffer(image_bytes, np.uint8)
@@ -118,7 +104,6 @@ def analyze_face(image_bytes):
         img = cv2.resize(img, (new_w, new_h))
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
-        # ИСПРАВЛЕННЫЙ ИМПОРТ MEDIAPIPE
         from mediapipe.python.solutions import face_mesh as fm
         face_mesh = fm.FaceMesh(
             static_image_mode=True,
@@ -206,7 +191,6 @@ def analyze_face(image_bytes):
         return None, str(e)
 
 # ===== ОБРАБОТЧИКИ БОТА =====
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     create_user(user.id, user.username, user.first_name)
@@ -218,14 +202,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("💰 Купить запросы", callback_data='buy')]
     ]
     
-    text = f"""👋 Привет, {user.first_name}!
-
-FACERO — анализ внешности и персональный lookmaxing.
-
-Получи оценку лица, найди сильные стороны и узнай, что можно улучшить.
-
-Осталось сегодня: {remaining}/5 запросов
-"""
+    text = f"👋 Привет, {user.first_name}!\n\nFACERO — анализ внешности.\nОсталось: {remaining}/5 запросов"
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -237,40 +214,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == 'rate' or data == 'improve':
         remaining = get_remaining(user_id)
         if remaining <= 0:
-            await query.edit_message_text(
-                "❌ Лимит запросов на сегодня исчерпан!\n\nКупи дополнительные запросы 👇",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💰 Купить запросы", callback_data='buy')]
-                ])
-            )
+            await query.edit_message_text("❌ Лимит исчерпан! Купи запросы.")
             return
         context.user_data['mode'] = data
-        await query.edit_message_text(
-            f"📸 Отправь своё селфи\n\nДля точного анализа:\n• лицо должно быть полностью видно\n• смотри прямо в камеру\n• хорошее освещение\n\nОсталось: {remaining}/5 запросов"
-        )
+        await query.edit_message_text(f"📸 Отправь своё селфи\n\nОсталось: {remaining}/5")
 
     elif data == 'buy':
         keyboard = [
-            [InlineKeyboardButton("📦 30 запросов — 19⭐", callback_data='buy_30')],
-            [InlineKeyboardButton("📦 80 запросов — 39⭐", callback_data='buy_80')],
-            [InlineKeyboardButton("📦 200 запросов — 79⭐", callback_data='buy_200')],
-            [InlineKeyboardButton("🏠 Главное меню", callback_data='menu')]
+            [InlineKeyboardButton("30 запросов — 19⭐", callback_data='buy_30')],
+            [InlineKeyboardButton("80 запросов — 39⭐", callback_data='buy_80')],
+            [InlineKeyboardButton("200 запросов — 79⭐", callback_data='buy_200')],
+            [InlineKeyboardButton("🏠 Меню", callback_data='menu')]
         ]
-        await query.edit_message_text(
-            "💰 Дополнительные запросы\n\nЗапросы не сгорают и действуют всегда.\nВыбери пакет:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        await query.edit_message_text("💰 Выбери пакет:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith('buy_'):
         count = int(data.split('_')[1])
         add_extra_requests(user_id, count)
-        await query.edit_message_text(
-            f"✅ Добавлено {count} запросов!\n\nТеперь у тебя {get_remaining(user_id)} доступных анализов.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🧬 Оценка внешности", callback_data='rate')],
-                [InlineKeyboardButton("🏠 Главное меню", callback_data='menu')]
-            ])
-        )
+        await query.edit_message_text(f"✅ Добавлено {count} запросов!")
 
     elif data == 'menu':
         await start(update, context)
@@ -278,60 +239,39 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     mode = context.user_data.get('mode', 'rate')
-    
     remaining = get_remaining(user_id)
     if remaining <= 0:
-        await update.message.reply_text(
-            "❌ Лимит запросов исчерпан!\nКупи дополнительные запросы.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("💰 Купить запросы", callback_data='buy')]
-            ])
-        )
+        await update.message.reply_text("❌ Лимит исчерпан!")
         return
 
-    msg = await update.message.reply_text("🔍 Анализирую лицо...\nПодожди несколько секунд ⏳")
-    
+    msg = await update.message.reply_text("🔍 Анализирую лицо...")
     try:
-        photo_file = await update.message.photo[-1].get_file()
-        image_bytes = await photo_file.download_as_bytearray()
-        
+        photo = await update.message.photo[-1].get_file()
+        image_bytes = await photo.download_as_bytearray()
         result = analyze_face(image_bytes)
-        
         if result[0] is None:
-            await msg.edit_text(f"⚠️ {result[1]}\n\nПопробуй отправить другое фото.")
+            await msg.edit_text(f"⚠️ {result[1]}")
             return
-        
         scores, total = result
         use_analysis(user_id)
         new_remaining = get_remaining(user_id)
-        
-        emojis = {
-            "Глаза": "👁", "Симметрия": "⚖️", "Нос": "👃",
-            "Губы": "👄", "Челюсть": "🗿", "Скулы": "💎",
-            "Кожа": "🧴", "Причёска": "💇", "Брови": "🪶"
-        }
-        
-        text = "✨ АНАЛИЗ ЗАВЕРШЁН\n\n"
-        for key, value in scores.items():
-            text += f"{emojis.get(key, '•')} {key} — {value}/10\n"
-        
-        text += "\n" + "━" * 25 + "\n"
-        text += f"⭐ ОБЩАЯ ОЦЕНКА: {total}/10\n"
-        text += "━" * 25 + "\n\n"
-        text += f"Осталось запросов: {new_remaining}"
-        
-        keyboard = [
-            [InlineKeyboardButton("🔄 Повторить анализ", callback_data=mode)],
-            [InlineKeyboardButton("🏠 Главное меню", callback_data='menu')]
-        ]
-        
-        await msg.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-        
-    except Exception as e:
-        logger.error(f"Ошибка обработки фото: {e}")
-        await msg.edit_text("❌ Произошла ошибка при анализе. Попробуй позже.")
 
-# ===== FLASK + WEBHOOK =====
+        emojis = {"Глаза": "👁", "Симметрия": "⚖️", "Нос": "👃", "Губы": "👄", "Челюсть": "🗿", "Скулы": "💎", "Кожа": "🧴", "Причёска": "💇", "Брови": "🪶"}
+        text = "✨ АНАЛИЗ ЗАВЕРШЁН\n\n"
+        for k, v in scores.items():
+            text += f"{emojis.get(k, '•')} {k} — {v}/10\n"
+        text += f"\n⭐ ОБЩАЯ ОЦЕНКА: {total}/10\n"
+        text += f"\nОсталось: {new_remaining} запросов"
+
+        keyboard = [
+            [InlineKeyboardButton("🔄 Повторить", callback_data=mode)],
+            [InlineKeyboardButton("🏠 Меню", callback_data='menu')]
+        ]
+        await msg.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    except Exception as e:
+        await msg.edit_text(f"❌ Ошибка: {e}")
+
+# ===== FLASK APP =====
 app = Flask(__name__)
 bot_app = None
 
@@ -342,8 +282,10 @@ async def setup_webhook():
     bot_app.add_handler(CallbackQueryHandler(button_handler))
     bot_app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     
-    WEBHOOK_URL = f"https://{os.environ.get('APP_HOST', 'localhost')}:{PORT}/webhook"
+    # ИСПРАВЛЕНО: убрал :{PORT} из вебхука
+    WEBHOOK_URL = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'localhost')}/webhook"
     await bot_app.bot.set_webhook(WEBHOOK_URL)
+    logger.info(f"Webhook установлен на: {WEBHOOK_URL}")
     return bot_app
 
 @app.route('/webhook', methods=['POST'])
@@ -358,7 +300,6 @@ async def webhook():
 def index():
     return "✅ FACERO Бот работает!", 200
 
-# ===== ЗАПУСК =====
 if __name__ == '__main__':
     init_db()
     import asyncio
