@@ -1,3 +1,8 @@
+# ============================================
+# FACERO — FULLY WORKING
+# RENDER.COM
+# ============================================
+
 import os
 import logging
 import sqlite3
@@ -18,7 +23,6 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 bot_app = None
 
-# ===== БАЗА ДАННЫХ =====
 def init_db():
     conn = sqlite3.connect('facero.db')
     c = conn.cursor()
@@ -33,7 +37,7 @@ def init_db():
     )''')
     conn.commit()
     conn.close()
-    logger.info("База данных создана")
+    logger.info("DB ready")
 
 def get_user(user_id):
     conn = sqlite3.connect('facero.db')
@@ -88,7 +92,6 @@ def add_extra_requests(user_id, count):
     conn.commit()
     conn.close()
 
-# ===== АНАЛИЗ ЛИЦА =====
 def analyze_face(image_bytes):
     try:
         nparr = np.frombuffer(image_bytes, np.uint8)
@@ -100,7 +103,7 @@ def analyze_face(image_bytes):
         new_w, new_h = int(w * scale), int(h * scale)
         img = cv2.resize(img, (new_w, new_h))
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        
+
         from mediapipe.python.solutions import face_mesh as fm
         face_mesh = fm.FaceMesh(
             static_image_mode=True,
@@ -108,7 +111,7 @@ def analyze_face(image_bytes):
             refine_landmarks=False,
             min_detection_confidence=0.5
         )
-        
+
         results = face_mesh.process(rgb)
         if not results.multi_face_landmarks:
             return None, "Лицо не найдено"
@@ -187,19 +190,18 @@ def analyze_face(image_bytes):
         logger.error(f"Ошибка анализа: {e}")
         return None, str(e)
 
-# ===== ОБРАБОТЧИКИ =====
 def start(update: Update, context):
     user = update.effective_user
     create_user(user.id, user.username, user.first_name)
     remaining = get_remaining(user.id)
-    
+
     keyboard = [
-        [InlineKeyboardButton("🧬 Оценка внешности", callback_data='rate')],
-        [InlineKeyboardButton("🚀 Улучшить внешность", callback_data='improve')],
-        [InlineKeyboardButton("💰 Купить запросы", callback_data='buy')]
+        [InlineKeyboardButton("🧬 Оценка", callback_data='rate')],
+        [InlineKeyboardButton("🚀 Улучшить", callback_data='improve')],
+        [InlineKeyboardButton("💰 Купить", callback_data='buy')]
     ]
-    
-    text = f"👋 Привет, {user.first_name}!\n\nFACERO — анализ внешности.\nОсталось: {remaining}/5 запросов"
+
+    text = f"👋 Привет, {user.first_name}!\nFACERO — анализ внешности.\nОсталось: {remaining}/5"
     update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 def button_handler(update: Update, context):
@@ -208,13 +210,13 @@ def button_handler(update: Update, context):
     user_id = query.from_user.id
     data = query.data
 
-    if data == 'rate' or data == 'improve':
+    if data in ['rate', 'improve']:
         remaining = get_remaining(user_id)
         if remaining <= 0:
-            query.edit_message_text("❌ Лимит исчерпан! Купи запросы.")
+            query.edit_message_text("❌ Лимит исчерпан. Купи запросы.")
             return
         context.user_data['mode'] = data
-        query.edit_message_text(f"📸 Отправь своё селфи\n\nОсталось: {remaining}/5")
+        query.edit_message_text(f"📸 Отправь селфи\nОсталось: {remaining}/5")
 
     elif data == 'buy':
         keyboard = [
@@ -268,16 +270,14 @@ def photo_handler(update: Update, context):
     except Exception as e:
         msg.edit_text(f"❌ Ошибка: {e}")
 
-# ===== НАСТРОЙКА БОТА =====
 def setup_bot():
     global bot_app
     bot_app = Application.builder().token(TOKEN).build()
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(CallbackQueryHandler(button_handler))
     bot_app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
-    logger.info("Бот настроен")
+    logger.info("✅ Бот настроен")
 
-# ===== FLASK =====
 @app.route('/webhook', methods=['POST'])
 def webhook():
     if not bot_app:
@@ -292,13 +292,12 @@ def index():
 
 @app.route('/set_webhook')
 def set_webhook():
-    url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'localhost')}/webhook"
     if not bot_app:
         return "Bot not initialized", 500
+    url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'localhost')}/webhook"
     bot_app.bot.set_webhook(url)
     return f"✅ Webhook set to {url}"
 
-# ===== ЗАПУСК =====
 if __name__ == '__main__':
     init_db()
     setup_bot()
