@@ -1,25 +1,22 @@
-# ============================================
-# FACERO — БОТ ДЛЯ ОЦЕНКИ ВНЕШНОСТИ
-# ДЛЯ RENDER.COM (БЕЗ ASYNC)
-# ============================================
-
 import os
 import logging
 import sqlite3
 from datetime import datetime
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 import numpy as np
 import cv2
 import mediapipe as mp
 
-# ===== НАСТРОЙКИ =====
 TOKEN = os.environ.get("BOT_TOKEN")
 PORT = 8443
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+app = Flask(__name__)
+bot_app = None
 
 # ===== БАЗА ДАННЫХ =====
 def init_db():
@@ -190,8 +187,8 @@ def analyze_face(image_bytes):
         logger.error(f"Ошибка анализа: {e}")
         return None, str(e)
 
-# ===== ОБРАБОТЧИКИ БОТА (БЕЗ ASYNC) =====
-def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ===== ОБРАБОТЧИКИ =====
+def start(update: Update, context):
     user = update.effective_user
     create_user(user.id, user.username, user.first_name)
     remaining = get_remaining(user.id)
@@ -205,7 +202,7 @@ def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"👋 Привет, {user.first_name}!\n\nFACERO — анализ внешности.\nОсталось: {remaining}/5 запросов"
     update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def button_handler(update: Update, context):
     query = update.callback_query
     query.answer()
     user_id = query.from_user.id
@@ -236,7 +233,7 @@ def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == 'menu':
         start(update, context)
 
-def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def photo_handler(update: Update, context):
     user_id = update.message.from_user.id
     mode = context.user_data.get('mode', 'rate')
     remaining = get_remaining(user_id)
@@ -271,26 +268,20 @@ def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         msg.edit_text(f"❌ Ошибка: {e}")
 
-# ===== FLASK APP =====
-app = Flask(__name__)
-bot_app = None
-
-def setup_webhook():
+# ===== НАСТРОЙКА БОТА =====
+def setup_bot():
     global bot_app
     bot_app = Application.builder().token(TOKEN).build()
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(CallbackQueryHandler(button_handler))
     bot_app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
-    
-    WEBHOOK_URL = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'localhost')}/webhook"
-    bot_app.bot.set_webhook(WEBHOOK_URL)
-    logger.info(f"Webhook установлен на: {WEBHOOK_URL}")
-    return bot_app
+    logger.info("Бот настроен")
 
+# ===== FLASK =====
 @app.route('/webhook', methods=['POST'])
 def webhook():
     if not bot_app:
-        return "Not ready", 500
+        return "Bot not ready", 500
     update = Update.de_json(request.get_json(force=True), bot_app.bot)
     bot_app.process_update(update)
     return "ok", 200
@@ -299,7 +290,16 @@ def webhook():
 def index():
     return "✅ FACERO Бот работает!", 200
 
+@app.route('/set_webhook')
+def set_webhook():
+    url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'localhost')}/webhook"
+    if not bot_app:
+        return "Bot not initialized", 500
+    bot_app.bot.set_webhook(url)
+    return f"✅ Webhook set to {url}"
+
+# ===== ЗАПУСК =====
 if __name__ == '__main__':
     init_db()
-    setup_webhook()
+    setup_bot()
     app.run(host='0.0.0.0', port=PORT)
