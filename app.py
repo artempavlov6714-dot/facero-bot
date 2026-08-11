@@ -1,6 +1,6 @@
 # ============================================
 # FACERO — БОТ ДЛЯ ОЦЕНКИ ВНЕШНОСТИ
-# ДЛЯ RENDER.COM (ИСПРАВЛЕННЫЙ)
+# ДЛЯ RENDER.COM (БЕЗ ASYNC)
 # ============================================
 
 import os
@@ -16,7 +16,7 @@ import mediapipe as mp
 
 # ===== НАСТРОЙКИ =====
 TOKEN = os.environ.get("BOT_TOKEN")
-PORT = 8443  # ИСПРАВЛЕНО: Telegram разрешает только 80, 88, 443, 8443
+PORT = 8443
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -190,8 +190,8 @@ def analyze_face(image_bytes):
         logger.error(f"Ошибка анализа: {e}")
         return None, str(e)
 
-# ===== ОБРАБОТЧИКИ БОТА =====
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ===== ОБРАБОТЧИКИ БОТА (БЕЗ ASYNC) =====
+def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     create_user(user.id, user.username, user.first_name)
     remaining = get_remaining(user.id)
@@ -203,21 +203,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     
     text = f"👋 Привет, {user.first_name}!\n\nFACERO — анализ внешности.\nОсталось: {remaining}/5 запросов"
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    query.answer()
     user_id = query.from_user.id
     data = query.data
 
     if data == 'rate' or data == 'improve':
         remaining = get_remaining(user_id)
         if remaining <= 0:
-            await query.edit_message_text("❌ Лимит исчерпан! Купи запросы.")
+            query.edit_message_text("❌ Лимит исчерпан! Купи запросы.")
             return
         context.user_data['mode'] = data
-        await query.edit_message_text(f"📸 Отправь своё селфи\n\nОсталось: {remaining}/5")
+        query.edit_message_text(f"📸 Отправь своё селфи\n\nОсталось: {remaining}/5")
 
     elif data == 'buy':
         keyboard = [
@@ -226,31 +226,31 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("200 запросов — 79⭐", callback_data='buy_200')],
             [InlineKeyboardButton("🏠 Меню", callback_data='menu')]
         ]
-        await query.edit_message_text("💰 Выбери пакет:", reply_markup=InlineKeyboardMarkup(keyboard))
+        query.edit_message_text("💰 Выбери пакет:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith('buy_'):
         count = int(data.split('_')[1])
         add_extra_requests(user_id, count)
-        await query.edit_message_text(f"✅ Добавлено {count} запросов!")
+        query.edit_message_text(f"✅ Добавлено {count} запросов!")
 
     elif data == 'menu':
-        await start(update, context)
+        start(update, context)
 
-async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     mode = context.user_data.get('mode', 'rate')
     remaining = get_remaining(user_id)
     if remaining <= 0:
-        await update.message.reply_text("❌ Лимит исчерпан!")
+        update.message.reply_text("❌ Лимит исчерпан!")
         return
 
-    msg = await update.message.reply_text("🔍 Анализирую лицо...")
+    msg = update.message.reply_text("🔍 Анализирую лицо...")
     try:
-        photo = await update.message.photo[-1].get_file()
-        image_bytes = await photo.download_as_bytearray()
+        photo = update.message.photo[-1].get_file()
+        image_bytes = photo.download_as_bytearray()
         result = analyze_face(image_bytes)
         if result[0] is None:
-            await msg.edit_text(f"⚠️ {result[1]}")
+            msg.edit_text(f"⚠️ {result[1]}")
             return
         scores, total = result
         use_analysis(user_id)
@@ -267,33 +267,32 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 Повторить", callback_data=mode)],
             [InlineKeyboardButton("🏠 Меню", callback_data='menu')]
         ]
-        await msg.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        msg.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
-        await msg.edit_text(f"❌ Ошибка: {e}")
+        msg.edit_text(f"❌ Ошибка: {e}")
 
 # ===== FLASK APP =====
 app = Flask(__name__)
 bot_app = None
 
-async def setup_webhook():
+def setup_webhook():
     global bot_app
     bot_app = Application.builder().token(TOKEN).build()
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(CallbackQueryHandler(button_handler))
     bot_app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     
-    # ИСПРАВЛЕНО: убрал :{PORT} из вебхука
     WEBHOOK_URL = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'localhost')}/webhook"
-    await bot_app.bot.set_webhook(WEBHOOK_URL)
+    bot_app.bot.set_webhook(WEBHOOK_URL)
     logger.info(f"Webhook установлен на: {WEBHOOK_URL}")
     return bot_app
 
 @app.route('/webhook', methods=['POST'])
-async def webhook():
+def webhook():
     if not bot_app:
         return "Not ready", 500
     update = Update.de_json(request.get_json(force=True), bot_app.bot)
-    await bot_app.process_update(update)
+    bot_app.process_update(update)
     return "ok", 200
 
 @app.route('/')
@@ -302,8 +301,5 @@ def index():
 
 if __name__ == '__main__':
     init_db()
-    import asyncio
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(setup_webhook())
+    setup_webhook()
     app.run(host='0.0.0.0', port=PORT)
